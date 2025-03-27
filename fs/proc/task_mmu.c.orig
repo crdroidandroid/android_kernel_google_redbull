@@ -182,7 +182,7 @@ static void vma_stop(struct proc_maps_private *priv)
 	struct mm_struct *mm = priv->mm;
 
 	release_task_mempolicy(priv);
-	mmap_read_unlock(mm);
+	up_read(&mm->mmap_sem);
 	mmput(mm);
 }
 
@@ -220,7 +220,7 @@ static void *m_start(struct seq_file *m, loff_t *ppos)
 	if (!mm || !mmget_not_zero(mm))
 		return NULL;
 
-	if (mmap_read_lock_killable(mm)) {
+	if (down_read_killable(&mm->mmap_sem)) {
 		mmput(mm);
 		return ERR_PTR(-EINTR);
 	}
@@ -354,23 +354,6 @@ static void show_vma_header_prefix(struct seq_file *m,
 extern void susfs_sus_ino_for_show_map_vma(unsigned long ino, dev_t *out_dev, unsigned long *out_ino);
 #endif
 
-static void show_vma_header_prefix_fake(struct seq_file *m,
-					unsigned long start, unsigned long end,
-					vm_flags_t flags, unsigned long long pgoff,
-					dev_t dev, unsigned long ino)
-{
-	seq_setwidth(m, 25 + sizeof(void *) * 6 - 1);
-	seq_printf(m, "%08lx-%08lx %c%c%c%c %08llx %02x:%02x %lu ",
-			start,
-			end,
-			flags & VM_READ ? 'r' : '-',
-			flags & VM_WRITE ? 'w' : '-',
-			flags & VM_EXEC ? '-' : '-',
-			flags & VM_MAYSHARE ? 's' : 'p',
-			pgoff,
-			MAJOR(dev), MINOR(dev), ino);
-}
-
 static void
 show_map_vma(struct seq_file *m, struct vm_area_struct *vma)
 {
@@ -382,7 +365,6 @@ show_map_vma(struct seq_file *m, struct vm_area_struct *vma)
 	unsigned long start, end;
 	dev_t dev = 0;
 	const char *name = NULL;
-	struct dentry *dentry;
 
 	if (file) {
 		struct inode *inode = file_inode(vma->vm_file);
@@ -398,30 +380,12 @@ show_map_vma(struct seq_file *m, struct vm_area_struct *vma)
 bypass_orig_flow:
 #endif
 		pgoff = ((loff_t)vma->vm_pgoff) << PAGE_SHIFT;
-		dentry = file->f_path.dentry;
-        if (dentry) {
-        	const char *path = (const char *)dentry->d_name.name; 
-            if (strstr(path, "lineage")) {
-			start = vma->vm_start;
-			end = vma->vm_end;
-			show_vma_header_prefix(m, start, end, flags, pgoff, dev, ino);
-			name = "/system/framework/framework-res.apk";
-			goto done;
-            }
-			if (strstr(path, "jit-zygote-cache")) { 
-			start = vma->vm_start;
-			end = vma->vm_end;
-			show_vma_header_prefix_fake(m, start, end, flags, pgoff, dev, ino);
-			goto bypass;
-            }
-        }
 	}
 
 	start = vma->vm_start;
 	end = vma->vm_end;
 	show_vma_header_prefix(m, start, end, flags, pgoff, dev, ino);
 
-	bypass:
 	/*
 	 * Print the dentry name for named mappings, and a
 	 * special [heap] marker for the heap:
@@ -775,9 +739,6 @@ static void show_smap_vma_flags(struct seq_file *m, struct vm_area_struct *vma)
 		[ilog2(VM_PKEY_BIT4)]	= "",
 #endif
 #endif /* CONFIG_ARCH_HAS_PKEYS */
-#ifdef CONFIG_HAVE_ARCH_USERFAULTFD_MINOR
-		[ilog2(VM_UFFD_MINOR)]	= "ui",
-#endif /* CONFIG_HAVE_ARCH_USERFAULTFD_MINOR */
 	};
 	size_t i;
 
@@ -948,7 +909,7 @@ static int show_smaps_rollup(struct seq_file *m, void *v)
 
 	memset(&mss, 0, sizeof(mss));
 
-	ret = mmap_read_lock_killable(mm);
+	ret = down_read_killable(&mm->mmap_sem);
 	if (ret)
 		goto out_put_mm;
 
@@ -967,7 +928,7 @@ static int show_smaps_rollup(struct seq_file *m, void *v)
 	__show_smap(m, &mss);
 
 	release_task_mempolicy(priv);
-	mmap_read_unlock(mm);
+	up_read(&mm->mmap_sem);
 
 out_put_mm:
 	mmput(mm);
@@ -1228,7 +1189,6 @@ static ssize_t clear_refs_write(struct file *file, const char __user *buf,
 		return -ESRCH;
 	mm = get_task_mm(task);
 	if (mm) {
-		struct mmu_notifier_range range;
 		struct clear_refs_private cp = {
 			.type = type,
 		};
@@ -1240,7 +1200,7 @@ static ssize_t clear_refs_write(struct file *file, const char __user *buf,
 		};
 
 		if (type == CLEAR_REFS_MM_HIWATER_RSS) {
-			if (mmap_write_lock_killable(mm)) {
+			if (down_write_killable(&mm->mmap_sem)) {
 				count = -EINTR;
 				goto out_mm;
 			}
@@ -1250,11 +1210,11 @@ static ssize_t clear_refs_write(struct file *file, const char __user *buf,
 			 * resident set size to this mm's current rss value.
 			 */
 			reset_mm_hiwater_rss(mm);
-			mmap_write_unlock(mm);
+			up_write(&mm->mmap_sem);
 			goto out_mm;
 		}
 
-		if (mmap_read_lock_killable(mm)) {
+		if (down_read_killable(&mm->mmap_sem)) {
 			count = -EINTR;
 			goto out_mm;
 		}
@@ -1263,8 +1223,8 @@ static ssize_t clear_refs_write(struct file *file, const char __user *buf,
 			for (vma = mm->mmap; vma; vma = vma->vm_next) {
 				if (!(vma->vm_flags & VM_SOFTDIRTY))
 					continue;
-				mmap_read_unlock(mm);
-				if (mmap_write_lock_killable(mm)) {
+				up_read(&mm->mmap_sem);
+				if (down_write_killable(&mm->mmap_sem)) {
 					count = -EINTR;
 					goto out_mm;
 				}
@@ -1283,26 +1243,23 @@ static ssize_t clear_refs_write(struct file *file, const char __user *buf,
 					 * failed like if
 					 * get_proc_task() fails?
 					 */
-					mmap_write_unlock(mm);
+					up_write(&mm->mmap_sem);
 					goto out_mm;
 				}
 				for (vma = mm->mmap; vma; vma = vma->vm_next) {
 					vma->vm_flags &= ~VM_SOFTDIRTY;
 					vma_set_page_prot(vma);
 				}
-				mmap_write_downgrade(mm);
+				downgrade_write(&mm->mmap_sem);
 				break;
 			}
-
-			mmu_notifier_range_init(&range, MMU_NOTIFY_UNMAP, 0,
-						NULL, mm, 0, -1UL);
-			mmu_notifier_invalidate_range_start(&range);
+			mmu_notifier_invalidate_range_start(mm, 0, -1);
 		}
 		walk_page_range(0, mm->highest_vm_end, &clear_refs_walk);
 		if (type == CLEAR_REFS_SOFT_DIRTY)
-			mmu_notifier_invalidate_range_end(&range);
+			mmu_notifier_invalidate_range_end(mm, 0, -1);
 		tlb_finish_mmu(&tlb, 0, -1);
-		mmap_read_unlock(mm);
+		up_read(&mm->mmap_sem);
 out_mm:
 		mmput(mm);
 	}
@@ -1664,11 +1621,11 @@ static ssize_t pagemap_read(struct file *file, char __user *buf,
 		/* overflow ? */
 		if (end < start_vaddr || end > end_vaddr)
 			end = end_vaddr;
-		ret = mmap_read_lock_killable(mm);
+		ret = down_read_killable(&mm->mmap_sem);
 		if (ret)
 			goto out_free;
 		ret = walk_page_range(start_vaddr, end, &pagemap_walk);
-		mmap_read_unlock(mm);
+		up_read(&mm->mmap_sem);
 		start_vaddr = end;
 
 		len = min(count, PM_ENTRY_BYTES * pm.pos);
@@ -1884,7 +1841,7 @@ static ssize_t reclaim_write(struct file *file, const char __user *buf,
 			.mm = mm,
 		};
 
-		mmap_read_lock(mm);
+		down_read(&mm->mmap_sem);
 		for (vma = mm->mmap; vma; vma = vma->vm_next) {
 			if (is_vm_hugetlb_page(vma))
 				continue;
@@ -1916,7 +1873,7 @@ static ssize_t reclaim_write(struct file *file, const char __user *buf,
 				break;
 		}
 		flush_tlb_mm(mm);
-		mmap_read_unlock(mm);
+		up_read(&mm->mmap_sem);
 		mmput(mm);
 	}
 	put_task_struct(task);
