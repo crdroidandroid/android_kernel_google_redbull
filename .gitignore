@@ -1,5 +1,7 @@
 #
 # NOTE! Don't add files that are generated in specific
+*.orig
+*.rej
 # subdirectories here. Add them in the ".gitignore" file
 # in that subdirectory instead.
 #
