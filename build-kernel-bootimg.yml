@@ -1,0 +1,87 @@
+name: Build Pixel 5 Kernel + Boot Image (Android 14 + KernelSU + SUSFS)
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [ '14.0' ]
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout Kernel branch 14.0
+        uses: actions/checkout@v3
+        with:
+          ref: 14.0
+
+      - name: Install build dependencies
+        run: |
+          sudo apt update
+          sudo apt install -y bc bison flex libssl-dev make \
+            build-essential libncurses5-dev lzop libelf-dev cpio \
+            python3 python3-pip git unzip curl wget
+
+      - name: Clone KernelSU
+        run: |
+          git clone --depth=1 https://github.com/KernelSU/KernelSU KernelSU
+          cd KernelSU && ./setup.sh ..
+
+      - name: Apply SUSFS kernel patches
+        run: |
+          git clone --depth=1 https://github.com/sidex15/susfs4ksu-module susfs
+          cd susfs/kernel_patches
+          patch -p1 < KernelSU/10_enable_susfs_for_ksu.patch
+          patch -p1 < 50_add_susfs_in_kernel.patch || true
+
+      - name: Download latest Pixel 5 stock Android 14 Factory Image
+        run: |
+          curl -LO https://dl.google.com/dl/android/aosp/redfin-14.0.0_r*-factory-*.tar.gz
+          tar -xzf redfin-*.tar.gz
+
+      - name: Prepare Clang toolchain
+        run: |
+          curl -L https://github.com/ClangBuiltLinux/tc-build/releases/download/20240316/clang+llvm-18.1.0.tar.xz \
+            -o clang.tar.xz
+          mkdir clang && tar -xf clang.tar.xz -C clang --strip-components=1
+          echo "$PWD/clang/bin" >> $GITHUB_PATH
+
+      - name: Build Kernel (KSU + SUSFS)
+        run: |
+          export ARCH=arm64 SUBARCH=arm64 PATH=clang/bin:$PATH
+          make O=out redbull_defconfig
+          scripts/config --file out/.config --enable CONFIG_KSU
+          scripts/config --file out/.config --enable CONFIG_KSU_SUSFS
+          make O=out -j$(nproc) CC=clang CLANG_TRIPLE=aarch64-linux-gnu-
+
+      - name: Unpack stock boot.img
+        run: |
+          mkdir unpack && cd unpack
+          python3 -m pip install python-magic
+          wget https://raw.githubusercontent.com/anestisb/android-prepare-vendor/master/mkbootimg.py
+          chmod +x mkbootimg.py
+          ../mkbootimg.py --unpack ../boot.img
+
+      - name: Repack custom boot.img
+        run: |
+          cd unpack
+          ../mkbootimg.py \
+            --kernel ../out/arch/arm64/boot/Image.gz-dtb \
+            --ramdisk ramdisk \
+            --dtb dtb \
+            --header_version 2 \
+            --pagesize 4096 \
+            --base 0x00000000 \
+            --kernel_offset 0x00008000 \
+            --ramdisk_offset 0x01000000 \
+            --tags_offset 0x00000100 \
+            --os_version 14.0.0 \
+            --os_patch_level $(date +'%Y-%m') \
+            -o ../pixel5-ksu-susfs-boot.img
+
+      - name: Upload Flashable Boot Image
+        uses: actions/upload-artifact@v4
+        with:
+          name: pixel5-ksu-susfs-boot
+          path: |
+            pixel5-ksu-susfs-boot.img
