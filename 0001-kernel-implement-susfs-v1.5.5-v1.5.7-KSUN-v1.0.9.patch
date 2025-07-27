@@ -12,8 +12,6 @@ Subject: [PATCH] kernel: implement susfs v1.5.5-v1.5.7 KSUN v1.0.8
  kernel/apk_sign.c        |   2 +-
  kernel/apk_sign.h        |   2 +-
  kernel/core_hook.c       | 561 +++++++++++++++++++++++++++++++++++++--
- kernel/kernel_compat.c   |  10 +
- kernel/kernel_compat.h   |   1 +
  kernel/ksu.c             |  16 +-
  kernel/ksud.c            |  21 +-
  kernel/ksud.h            |   2 +-
@@ -1085,39 +1083,6 @@ index 2307e665..0e940beb 100644
  
  	return 0;
  }
-diff --git a/kernel/kernel_compat.c b/kernel/kernel_compat.c
-index 841a0e52..47d8f5e3 100644
---- a/kernel/kernel_compat.c
-+++ b/kernel/kernel_compat.c
-@@ -76,6 +76,16 @@ void ksu_android_ns_fs_check()
- 	task_unlock(current);
- }
- 
-+int ksu_access_ok(const void *addr, unsigned long size) {
-+#if LINUX_VERSION_CODE < KERNEL_VERSION(5,0,0)
-+    /* For kernels before 5.0.0, pass the type argument to access_ok. */
-+    return access_ok(VERIFY_READ, addr, size);
-+#else
-+    /* For kernels 5.0.0 and later, ignore the type argument. */
-+    return access_ok(addr, size);
-+#endif
-+}
-+
- struct file *ksu_filp_open_compat(const char *filename, int flags, umode_t mode)
- {
- #if LINUX_VERSION_CODE < KERNEL_VERSION(4, 10, 0) || defined(CONFIG_IS_HW_HISI) || defined(CONFIG_KSU_ALLOWLIST_WORKAROUND)
-diff --git a/kernel/kernel_compat.h b/kernel/kernel_compat.h
-index 6d79f7ed..b0d664a9 100644
---- a/kernel/kernel_compat.h
-+++ b/kernel/kernel_compat.h
-@@ -29,6 +29,7 @@ extern struct key *init_session_keyring;
- #endif
- 
- extern void ksu_android_ns_fs_check();
-+extern int ksu_access_ok(const void *addr, unsigned long size);
- extern struct file *ksu_filp_open_compat(const char *filename, int flags,
- 					 umode_t mode);
- extern ssize_t ksu_kernel_read_compat(struct file *p, void *buf, size_t count,
 diff --git a/kernel/ksu.c b/kernel/ksu.c
 index 11864141..a8a02c2f 100644
 --- a/kernel/ksu.c
