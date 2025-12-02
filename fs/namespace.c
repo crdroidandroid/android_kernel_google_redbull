@@ -1054,19 +1054,19 @@ struct vfsmount *vfs_create_mount(struct fs_context *fc)
 	int mnt_id;
 #endif
 	
-	if (!type)
-		return ERR_PTR(-ENODEV);
+	if (!fc->root)
+		return ERR_PTR(-EINVAL);
 
 #ifdef CONFIG_KSU_SUSFS_SUS_MOUNT
 	// For newly created mounts, the only caller process we care is KSU
 	if (unlikely(susfs_is_current_ksu_domain())) {
-		mnt = alloc_vfsmnt(name, true, 0);
+		mnt = alloc_vfsmnt(fc->source ?: "none", true, 0);
 		goto bypass_orig_flow;
 	}
-	mnt = alloc_vfsmnt(name, false, 0);
+	mnt = alloc_vfsmnt(fc->source ?: "none", false, 0);
 bypass_orig_flow:
 #else
-	mnt = alloc_vfsmnt(name);
+	mnt = alloc_vfsmnt(fc->source ?: "none");
 #endif
 	if (!mnt)
 		return ERR_PTR(-ENOMEM);
@@ -1074,15 +1074,12 @@ bypass_orig_flow:
 	if (fc->sb_flags & SB_KERNMOUNT)
 		mnt->mnt.mnt_flags = MNT_INTERNAL;
 
+
 	atomic_inc(&fc->root->d_sb->s_active);
 	mnt->mnt.mnt_sb		= fc->root->d_sb;
 	mnt->mnt.mnt_root	= dget(fc->root);
 	mnt->mnt_mountpoint	= mnt->mnt.mnt_root;
 	mnt->mnt_parent		= mnt;
-	mnt->mnt.mnt_root = root;
-	mnt->mnt.mnt_sb = root->d_sb;
-	mnt->mnt_mountpoint = mnt->mnt.mnt_root;
-	mnt->mnt_parent = mnt;
 
 #ifdef CONFIG_KSU_SUSFS_SUS_MOUNT
 	// - If caller process is zygote, then it is a normal mount, so we calculate the next available 
@@ -1092,15 +1089,18 @@ bypass_orig_flow:
 		if (mnt_ns) {
 			get_mnt_ns(mnt_ns);
 			rcu_read_lock();
-			mnt_id = list_first_entry(&mnt_ns->list, struct mount, mnt_list)->mnt_id;
-			list_for_each_entry_rcu(m, &mnt_ns->list, mnt_list) {
-				if (m->mnt_id < DEFAULT_SUS_MNT_ID) {
-					mnt_id++;
+			if (!list_empty(&mnt_ns->list)) {
+				mnt_id = list_first_entry(&mnt_ns->list, struct mount, mnt_list)->mnt_id;
+				list_for_each_entry_rcu(m, &mnt_ns->list, mnt_list) {
+					if (m->mnt_id < DEFAULT_SUS_MNT_ID) {
+						mnt_id++;
+					}
 				}
+				WRITE_ONCE(mnt->mnt.susfs_mnt_id_backup, READ_ONCE(mnt->mnt_id));
+				WRITE_ONCE(mnt->mnt_id, READ_ONCE(mnt_id));
+				rcu_read_unlock();
+				put_mnt_ns(mnt_ns);
 			}
-			WRITE_ONCE(mnt->mnt.susfs_mnt_id_backup, READ_ONCE(mnt->mnt_id));
-			WRITE_ONCE(mnt->mnt_id, READ_ONCE(mnt_id));
-			rcu_read_unlock();
 		}
 	}
 	
@@ -1276,15 +1276,18 @@ bypass_orig_flow:
 		if (mnt_ns) {
 			get_mnt_ns(mnt_ns);
 			rcu_read_lock();
-			mnt_id = list_first_entry(&mnt_ns->list, struct mount, mnt_list)->mnt_id;
-			list_for_each_entry_rcu(m, &mnt_ns->list, mnt_list) {
+			if (!list_empty(&mnt_ns->list)) {
+				mnt_id = list_first_entry(&mnt_ns->list, struct mount, mnt_list)->mnt_id;
+				list_for_each_entry_rcu(m, &mnt_ns->list, mnt_list) {
 
-				if (m->mnt_id < DEFAULT_SUS_MNT_ID) {
-					mnt_id++;
+					if (m->mnt_id < DEFAULT_SUS_MNT_ID) {
+						mnt_id++;
+					}
 				}
+				WRITE_ONCE(mnt->mnt.susfs_mnt_id_backup, READ_ONCE(mnt->mnt_id));
+				WRITE_ONCE(mnt->mnt_id, READ_ONCE(mnt_id));
 			}
-			WRITE_ONCE(mnt->mnt.susfs_mnt_id_backup, READ_ONCE(mnt->mnt_id));
-			WRITE_ONCE(mnt->mnt_id, READ_ONCE(mnt_id));
+
 			rcu_read_unlock();
 			put_mnt_ns(mnt_ns);
 		}
