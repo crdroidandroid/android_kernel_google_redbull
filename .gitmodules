@@ -1,0 +1,4 @@
+[submodule "KernelSU-Next"]
+	path = KernelSU-Next
+	url = https://github.com/306bobby-android/KernelSU-Legacy
+	branch = v1.1.1
