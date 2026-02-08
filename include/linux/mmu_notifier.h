@@ -15,6 +15,18 @@ struct mmu_notifier_ops;
 /* mmu_notifier_ops flags */
 #define MMU_INVALIDATE_DOES_NOT_BLOCK	(0x01)
 
+enum mmu_notifier_event {
+	MMU_NOTIFY_UNMAP = 0,
+	MMU_NOTIFY_CLEAR,
+	MMU_NOTIFY_PROTECTION_VMA,
+	MMU_NOTIFY_PROTECTION_PAGE,
+	MMU_NOTIFY_SOFT_DIRTY,
+	MMU_NOTIFY_RELEASE,
+	MMU_NOTIFY_MIGRATE,
+};
+
+#define MMU_NOTIFIER_RANGE_BLOCKABLE (1 << 0)
+
 #ifdef CONFIG_MMU_NOTIFIER
 
 /*
@@ -35,6 +47,7 @@ struct mmu_notifier_range {
 	unsigned long start;
 	unsigned long end;
 	bool blockable;
+	enum mmu_notifier_event event;
 };
 
 struct mmu_notifier_ops {
@@ -353,6 +366,8 @@ static inline void mmu_notifier_range_init(struct mmu_notifier_range *range,
 	range->mm = mm;
 	range->start = start;
 	range->end = end;
+	range->blockable = (flags & MMU_NOTIFIER_RANGE_BLOCKABLE);
+	range->event = event;
 }
 
 #define ptep_clear_flush_young_notify(__vma, __address, __ptep)		\
