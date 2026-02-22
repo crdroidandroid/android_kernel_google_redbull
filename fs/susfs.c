@@ -14,6 +14,7 @@
 #include <linux/fdtable.h>
 #include <linux/statfs.h>
 #include <linux/susfs.h>
+#include <linux/err.h>
 #include "mount.h"
 
 static spinlock_t susfs_spin_lock;
@@ -581,6 +582,10 @@ void susfs_auto_add_try_umount_for_bind_mount(struct path *path) {
 	bool is_magic_mount_path = false;
 #endif
 
+	if (!path || !path->dentry || !path->dentry->d_inode) {
+		return;
+	}
+
 #ifdef CONFIG_KSU_SUSFS_SUS_KSTAT
 	if (path->dentry->d_inode->i_state & INODE_STATE_SUS_KSTAT) {
 		SUSFS_LOGI("skip adding path to try_umount list as its inode is flagged INODE_STATE_SUS_KSTAT already\n");
@@ -595,8 +600,8 @@ void susfs_auto_add_try_umount_for_bind_mount(struct path *path) {
 	}
 
 	dpath = d_path(path, pathname, PAGE_SIZE);
-	if (!dpath) {
-		SUSFS_LOGE("dpath is NULL\n");
+	if (IS_ERR(dpath)) {
+		SUSFS_LOGE("dpath error: %ld\n", PTR_ERR(dpath));
 		goto out_free_pathname;
 	}
 
