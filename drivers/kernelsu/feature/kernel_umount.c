@@ -82,7 +82,6 @@ static void ksu_sys_umount(const char *mnt, int flags)
 	})
 
 #endif
-
 #if !defined(CONFIG_KSU_SUSFS) || !defined(CONFIG_KSU_SUSFS_TRY_UMOUNT)
 static void try_umount(const char *mnt, int flags)
 #else
@@ -164,7 +163,8 @@ int ksu_handle_umount(uid_t old_uid, uid_t new_uid)
 	// also handle case 4 and 5
 	bool is_zygote_child = is_zygote(current_cred());
 	if (!is_zygote_child) {
-		pr_info("handle umount ignore non zygote child: %d\n", current->pid);
+		pr_info("handle umount ignore non zygote child: %d\n",
+			current->pid);
 		return 0;
 	}
 #endif // #if defined(CONFIG_KSU_SUSFS) || !defined(CONFIG_KSU_SUSFS_TRY_UMOUNT)
